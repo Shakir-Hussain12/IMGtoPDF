@@ -1,13 +1,14 @@
 const fileInput = document.getElementById("fileInput");
 const dropZone = document.getElementById("drop-zone");
-const fileList = document.getElementById("fileList");
+const previewGrid = document.getElementById("previewGrid");
 const convertBtn = document.getElementById("convertBtn");
 const pageSizeSelect = document.getElementById("pageSize");
 
 let images = [];
+let dragIndex = null;
 
-//drag and drop handlers
-dropZone.addEventListener("dragover", (e) => {
+//drag and drop handler
+dropZone.addEventListener("dragover", e => {
   e.preventDefault();
   dropZone.classList.add("dragover");
 });
@@ -16,51 +17,90 @@ dropZone.addEventListener("dragleave", () => {
   dropZone.classList.remove("dragover");
 });
 
-dropZone.addEventListener("drop", (e) => {
+dropZone.addEventListener("drop", e => {
   e.preventDefault();
   dropZone.classList.remove("dragover");
   handleFiles(e.dataTransfer.files);
 });
 
-// file input handlers
-fileInput.addEventListener("change", (e) => {
+
+fileInput.addEventListener("change", e => {
   handleFiles(e.target.files);
 });
 
+//file handler
 function handleFiles(files) {
   for (const file of files) {
-    if (file.type.startsWith("image/")) {
-      images.push(file);
-    }
+    if (!file.type.startsWith("image/")) continue;
+
+    images.push({
+      file,
+      url: URL.createObjectURL(file)
+    });
   }
-  renderList();
+  renderPreviews();
 }
 
-//render file list
-function renderList() {
-  fileList.innerHTML = "";
-  images.forEach((img, i) => {
-    const li = document.createElement("li");
-    li.textContent = `${i + 1}. ${img.name}`;
-    fileList.appendChild(li);
+// image previews
+function renderPreviews() {
+  previewGrid.innerHTML = "";
+
+  images.forEach((imgObj, index) => {
+    const card = document.createElement("div");
+    card.className = "image-card";
+    card.draggable = true;
+
+    card.addEventListener("dragstart", () => {
+      dragIndex = index;
+      card.classList.add("dragging");
+    });
+
+    card.addEventListener("dragend", () => {
+      dragIndex = null;
+      card.classList.remove("dragging");
+    });
+
+    card.addEventListener("dragover", e => e.preventDefault());
+
+    card.addEventListener("drop", () => {
+      if (dragIndex === null || dragIndex === index) return;
+
+      const dragged = images[dragIndex];
+      images.splice(dragIndex, 1);
+      images.splice(index, 0, dragged);
+
+      renderPreviews();
+    });
+
+    const img = document.createElement("img");
+    img.src = imgObj.url;
+
+    const removeBtn = document.createElement("button");
+    removeBtn.textContent = "Remove";
+    removeBtn.onclick = () => {
+      URL.revokeObjectURL(imgObj.url);
+      images.splice(index, 1);
+      renderPreviews();
+    };
+
+    card.appendChild(img);
+    card.appendChild(removeBtn);
+    previewGrid.appendChild(card);
   });
 
   convertBtn.disabled = images.length === 0;
 }
 
-//convert to PDF
+// convert to PDF
 convertBtn.addEventListener("click", async () => {
   const { jsPDF } = window.jspdf;
-
-  const pageSize = pageSizeSelect.value;
   const pdf = new jsPDF({
-    format: pageSize,
-    unit: "mm"
+    unit: "mm",
+    format: pageSizeSelect.value
   });
 
   for (let i = 0; i < images.length; i++) {
-    const imgData = await fileToDataURL(images[i]);
-    const img = await loadImage(imgData);
+    const img = await loadImage(images[i].url);
 
     const pageWidth = pdf.internal.pageSize.getWidth();
     const pageHeight = pdf.internal.pageSize.getHeight();
@@ -72,6 +112,7 @@ convertBtn.addEventListener("click", async () => {
 
     const width = img.width * ratio;
     const height = img.height * ratio;
+
     const x = (pageWidth - width) / 2;
     const y = (pageHeight - height) / 2;
 
@@ -82,16 +123,8 @@ convertBtn.addEventListener("click", async () => {
   pdf.save("images.pdf");
 });
 
-function fileToDataURL(file) {
-  return new Promise((resolve) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.readAsDataURL(file);
-  });
-}
-
 function loadImage(src) {
-  return new Promise((resolve) => {
+  return new Promise(resolve => {
     const img = new Image();
     img.onload = () => resolve(img);
     img.src = src;
