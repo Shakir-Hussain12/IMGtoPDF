@@ -3,6 +3,12 @@ const dropZone = document.getElementById("drop-zone");
 const previewGrid = document.getElementById("previewGrid");
 const convertBtn = document.getElementById("convertBtn");
 const pageSizeSelect = document.getElementById("pageSize");
+const maxPdfSizeInput = document.getElementById("maxPdfSize");
+
+const MAX_PDF_MB = parseFloat(maxPdfSizeInput.value) || 10;
+const PDF_OVERHEAD_MB = 0.6; // safety buffer
+const MAX_IMG_DIM = 2000;    // pixels
+
 
 let images = [];
 let dragIndex = null;
@@ -99,8 +105,26 @@ convertBtn.addEventListener("click", async () => {
     format: pageSizeSelect.value
   });
 
+  // Calculate target size per image
+  const imageCount = images.length;
+  const totalBytes =
+    (MAX_PDF_MB - PDF_OVERHEAD_MB) * 1024 * 1024;
+
+  const perImageBudget = totalBytes / imageCount;
+
   for (let i = 0; i < images.length; i++) {
     const img = await loadImage(images[i].url);
+
+    const compressedBlob = await compressImageToBudget(
+      img,
+      perImageBudget
+    );
+
+    const imgData = await new Promise(res => {
+      const reader = new FileReader();
+      reader.onload = () => res(reader.result);
+      reader.readAsDataURL(compressedBlob);
+    });
 
     const pageWidth = pdf.internal.pageSize.getWidth();
     const pageHeight = pdf.internal.pageSize.getHeight();
@@ -117,7 +141,8 @@ convertBtn.addEventListener("click", async () => {
     const y = (pageHeight - height) / 2;
 
     if (i !== 0) pdf.addPage();
-    pdf.addImage(img, "JPEG", x, y, width, height);
+
+    pdf.addImage(imgData, "JPEG", x, y, width, height);
   }
 
   pdf.save("images.pdf");
@@ -129,4 +154,36 @@ function loadImage(src) {
     img.onload = () => resolve(img);
     img.src = src;
   });
+}
+
+// Resize images to fit constraints before adding to PDF
+async function compressImageToBudget(img, targetBytes) {
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d");
+
+  // Resize large images early
+  let { width, height } = img;
+  const scale = Math.min(1, MAX_IMG_DIM / Math.max(width, height));
+  width *= scale;
+  height *= scale;
+
+  canvas.width = width;
+  canvas.height = height;
+  ctx.drawImage(img, 0, 0, width, height);
+
+  // Adaptive JPEG quality
+  for (let quality = 0.85; quality >= 0.4; quality -= 0.05) {
+    const blob = await new Promise(res =>
+      canvas.toBlob(res, "image/jpeg", quality)
+    );
+
+    if (blob.size <= targetBytes) {
+      return blob;
+    }
+  }
+
+  // fallback (lowest quality)
+  return await new Promise(res =>
+    canvas.toBlob(res, "image/jpeg", 0.4)
+  );
 }
